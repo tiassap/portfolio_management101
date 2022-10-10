@@ -7,13 +7,13 @@ from datetime import datetime
 class marketData_CSV():
 	"""
 	Processing crypto market data from CSV file.
-	Access the data by `marketData_CSV.dataset`.
+	Access the output data by `marketData_CSV.dataset`.
 	...
 	Attributes
 	----------
 	csv_filePath : str
-		Path name of csv files of market data.
-		Strictly need to use these file names: 'close.csv', 'high.csv', 'low.csv', 'open.csv'
+		Path name of csv files of market data. Example: 'data/'
+		For CSV files, strictly need to use these file names: 'close.csv', 'high.csv', 'low.csv', 'open.csv'
 	currencies : list
 		List of cryptocurrencies to be used
 	start : str
@@ -31,6 +31,7 @@ class marketData_CSV():
 		# Channels of the array
 		self.channels = ['open', 'high', 'low']
 
+		# Dataset (np.array) after processing.
 		self.dataset = self.__process()
 
 	def __process(self):
@@ -71,7 +72,7 @@ class marketData_CSV():
 
 	def validate_dataset(self, dataset):
 		"""Validate csv files format. Return error if incorrect"""
-		pass
+		pass ## To be updated later ##
 
 
 if __name__ == "__main__":
