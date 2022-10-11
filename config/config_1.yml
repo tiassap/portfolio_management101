@@ -1,0 +1,10 @@
+dataset:
+  source : ###
+  path : ###
+  currencies : ###
+  start_period : ###
+  end_period : ###
+
+hyperparams:
+  learning_rate : ###
+  ###
