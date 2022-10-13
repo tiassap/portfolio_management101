@@ -5,7 +5,9 @@ from src.network import #...
 
 
 class DPG(object):
-    """Deterministic Policy Gradient"""
+    """
+    Deterministic Policy Gradient
+    """
 
     def __init__(self, config, dataset) -> None:
         self.config = config # yaml parser (can be accessed as dictionary). See `config/ ... .yml` file

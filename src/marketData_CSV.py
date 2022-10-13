@@ -76,7 +76,7 @@ class marketData_CSV():
 
 
 if __name__ == "__main__":
-	path = 'data'
+	path = 'data/'
 	coins = ['ADA', 'ALGO', 'BTC', 'ETH', 'DOGE']
 	start="2021-04-01"
 	end="2021-12-31"
