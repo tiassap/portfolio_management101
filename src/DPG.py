@@ -4,48 +4,62 @@ import deque
 from src.network import #...
 
 
+
 class DPG(object):
-    """Deterministic Policy Gradient"""
+    """
+    Deterministic Policy Gradient
+    """
 
     def __init__(self, config, dataset) -> None:
         self.config = config # yaml parser (can be accessed as dictionary). See `config/ ... .yml` file
-        self.price_data = dataset # Dataset source is defined in `run.py`
+        self.price_data = dataset # Dataset source is defined in `run.py`. Example = marketData_CSV()
         self.buffer = PVM() # Replay buffer
         self.NNmodel = None # should be replaced by class Neural_Network()
         self.optimizer = torch.optim.Adam(self.model.parameters())
 
-        self.portVal_history = [] # list of portfolio value history
+        self.beta = config["beta"] # = 5e-5, probability-decaying rate determining the shape of the probability distribution for sampling tb for training NN
+        self.nb = config["window-size_nb"] # = 50, window size (size of X).
+        self.Nb = config["mini-batch_Nb"] # = 50, mini batch size
+        self.cs = config["cs"] # 0.0025 commision rate
 
         
     def train(self):
         """
         Run training process
         """
-        episode = 0
+        t = 0
         while True:
-            episode += 1
+            t += 1
 
-            # Get a batch of random price data and take portfolio vector from replay buffer
-            X = self.get_sample_batch()
-            w = self.buffer.get_vector()
-            w_out = self.take_action(X, w)
+            # Because X size is nb --> 50
+            if t >= self.nb:
+                # Get a batch price data at time step t, take portfolio vector from replay buffer, and do forward pass
+                X = self.get_X(t)
+                w = self.buffer.get_previous_w()
+                w_out = self.take_action(X, w) # forward pass of neural network
 
             # Store sample path into replay buffer
             self.buffer.store_portfolio_vector(w_out)
 
+            # Start training after ... time steps (after portvolio vector memory filled), and update neural network every ... time step freq
+            if t >= train_start and t % freq_train == 0 :
             # Learning one step using batch of data from replay buffer.
-            self.update_step()
+                train_batch = self.get_sample_batch()
+                self.update_step(train_batch)
 
-            # Add history of portfolio value
-            self.portVal_history.append(self.calc_portValue())
-
-            if episode >= max_episode_length or t >= dataset_end_period:
+            # Finish training at these conditions
+            if t >= max_t_length or t >= dataset_end_period:
                 break
-
+    
+    def get_X(self, t):
+        """
+        get X input at time step t
+        """
+        return self.price_data[:, :, t-self.nb:t]
 
     def calc_portValue(self, Y, w):
         """
-        Calculate portfolio value at given step
+        Calculate portfolio value at given step: sum of ( price of each asset times weight of each asset)
         """
         pass
 
@@ -55,11 +69,12 @@ class DPG(object):
         """
         return self.NNmodel(x, w) # NN model take price data input and previous portfolio weight
 
-    def update_step(self):
+    def update_step(self, train_batch):
         """
         One neural network training update step.
         Use sample batch.
         """
+        X, prev_w = train_batch
         self.optimizer.zero_grad()
         loss = self.calc_loss()
         loss.backward()
@@ -72,12 +87,15 @@ class DPG(object):
         """
         pass
 
-    def get_sample_batch(self, t):
+    def get_sample_batch(self, t, beta, nb):
         """
         Get a batch of path sample randomly from self.buffer (PVM() class)
         """
-        self.buffer.get_batch_data()
-        pass
+        tb_sample = distribution_tb(t, beta, nb)
+        X_sample = self.getX(tb_sample)
+        w_sample = self.buffer.get_previous_w(tb_sample)
+
+        return X_sample, w_sample
 
     def save_model(self):
         """
@@ -108,7 +126,7 @@ class PVM():
         """
         pass
 
-    def get_vector(self):
+    def get_previous_w(self):
         """
         take latest portfolio vector.
         """
