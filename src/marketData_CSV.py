@@ -41,7 +41,7 @@ class marketData_CSV():
 		Return
 		------
 		dataset : Numpy Array
-			dataset.shape : (num_channels, num_currencies, time_period)
+			dataset.shape : (num_channels, time_period, num_currencies)
 		"""
 		from functools import reduce
 
@@ -66,9 +66,13 @@ class marketData_CSV():
 		# Convert to numpy array and reshaping.
 		dataset = dataset.values[:, 1:]
 		dataset = np.array(np.split(dataset, len(self.channels), axis=1))
-		dataset = np.moveaxis(dataset, 1, -1)
+		# dataset = np.moveaxis(dataset, 1, -1)
 
-		return dataset
+		# Price relative vector. Stacked np.ones at the top so the time index align
+		Y = dataset[0, 1:]/dataset[0,:-1] # Take only the first feature (index 0), closing price
+		Y = np.vstack([np.ones(Y.shape[1]), Y])
+
+		return dataset, Y
 
 	def validate_dataset(self, dataset):
 		"""Validate csv files format. Return error if incorrect"""
@@ -81,4 +85,8 @@ if __name__ == "__main__":
 	start="2021-04-01"
 	end="2021-12-31"
 	data = marketData_CSV(csv_filePath=path, currencies=coins, start=start, end=end)
-	print(data.dataset)
+	# print(data.dataset)
+	# t = 10
+	# X = data.dataset[:, :, t:t+5]
+	# print(X)
+	print(data.dataset[1])

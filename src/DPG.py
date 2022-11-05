@@ -1,7 +1,6 @@
 import torch
 import numpy as np
-import deque
-from src.network import #...
+from src.network import NetworkCNN
 
 
 
@@ -12,15 +11,25 @@ class DPG(object):
 
     def __init__(self, config, dataset) -> None:
         self.config = config # yaml parser (can be accessed as dictionary). See `config/ ... .yml` file
-        self.price_data = dataset # Dataset source is defined in `run.py`. Example = marketData_CSV()
-        self.buffer = PVM() # Replay buffer
-        self.NNmodel = None # should be replaced by class Neural_Network()
+        self.feature_num = config["input"]["feature_number"]
+        # self.coin_num = config["input"]["coin_num"]
+        self.coin_num = len(config["dataset"]["currencies"])
+        self.window_size = config["input"]["window_size"] # nb = 50, window size (size of X).
+
+        self.price_data, self.Y = dataset.dataset # Dataset source is defined in `run.py`. Example = marketData_CSV()
+        self.total_timeStep = self.price_data.shape[1] # Total time step inside dataset
+
+        self.pvm = PVM(self.total_timeStep, self.coin_num) # Replay buffer
+        self.NNmodel = NetworkCNN(feature_number=self.feature_num, num_currencies=self.coin_num, window_size=self.window_size ) # should be replaced by class Neural_Network()
         self.optimizer = torch.optim.Adam(self.model.parameters())
 
-        self.beta = config["beta"] # = 5e-5, probability-decaying rate determining the shape of the probability distribution for sampling tb for training NN
-        self.nb = config["window-size_nb"] # = 50, window size (size of X).
-        self.Nb = config["mini-batch_Nb"] # = 50, mini batch size
-        self.cs = config["cs"] # 0.0025 commision rate
+        self.beta = config["hyperparams"]["beta"] # = 5e-5, probability-decaying rate determining the shape of the probability distribution for sampling tb for training NN
+        self.Nb = config["hyperparams"]["mini_batch"] # = 50, mini batch size
+        self.mu_t = config["hyperparams"]["comission_rate"] # 0.0025 commision rate (constant, cp=cs)
+        self.lr = config["hyperparams"]["learning_rate"]
+
+        self.p_0 = config["input"]["init_value"]
+        self.portValues = []
 
         
     def train(self):
@@ -35,39 +44,58 @@ class DPG(object):
             if t >= self.nb:
                 # Get a batch price data at time step t, take portfolio vector from replay buffer, and do forward pass
                 X = self.get_X(t)
-                w = self.buffer.get_previous_w()
+                w = self.pvm.get_previous_w(t)
                 w_out = self.take_action(X, w) # forward pass of neural network
+                # PAY ATTENTION to whether cash coin included in the tensor or not!
 
-            # Store sample path into replay buffer
-            self.buffer.store_portfolio_vector(w_out)
+                # Store sample path into replay buffer
+                self.pvm.store_portfolio_vector(w_out)
+
+                # Store cumulative portfolio value
+                self.store_cumPortVal(t)
 
             # Start training after ... time steps (after portvolio vector memory filled), and update neural network every ... time step freq
-            if t >= train_start and t % freq_train == 0 :
+            if t >= self.config["hyperparams"]["train_start"] and t % self.config["hyperparams"]["train_freq"] == 0 :
             # Learning one step using batch of data from replay buffer.
                 train_batch = self.get_sample_batch()
                 self.update_step(train_batch)
 
             # Finish training at these conditions
-            if t >= max_t_length or t >= dataset_end_period:
+            if t >= self.total_timeStep-1:
                 break
     
     def get_X(self, t):
         """
-        get X input at time step t
+        get X input at time step t.
+        'allprices in the input tensor will be normalization by the latest closing prices'
         """
-        return self.price_data[:, :, t-self.nb:t]
+        X = self.price_data[:, t-self.nb:t, :] / self.price_data[:, t-1, :]
+        X = X.transpose(0, 2, 1)
+        X = np.expand_dims(X, axis=0)
 
-    def calc_portValue(self, Y, w):
+        X = torch.from_numpy(X)
+
+        return X
+
+    def calc_portValue(self, t):
+        return np.sum(self.mu_t * self.Y[t] * self.pvm.get_previous_w(t))
+    
+    def store_cumPortVal(self, t):
         """
         Calculate portfolio value at given step: sum of ( price of each asset times weight of each asset)
         """
-        pass
+        if len(self.portValues) == 0:
+            self.portValues.append(self.p_0)
 
-    def take_action(self, x, w):
+        # Equation (12) in paper
+        cum_portVal = self.portValues[-1] * self.calc_portValue(t)
+        self.portValues.append(cum_portVal)
+
+    def take_action(self, X, w):
         """
         Get action (portfolio weight vector) by doing inference on neural network
         """
-        return self.NNmodel(x, w) # NN model take price data input and previous portfolio weight
+        return self.NNmodel(X, w) # NN model take price data input and previous portfolio weight
 
     def update_step(self, train_batch):
         """
@@ -76,7 +104,7 @@ class DPG(object):
         """
         X, prev_w = train_batch
         self.optimizer.zero_grad()
-        loss = self.calc_loss()
+        loss = self.calc_loss(train_batch) * -1
         loss.backward()
         self.optimizer.step()
 
@@ -87,15 +115,33 @@ class DPG(object):
         """
         pass
 
-    def get_sample_batch(self, t, beta, nb):
-        """
-        Get a batch of path sample randomly from self.buffer (PVM() class)
-        """
-        tb_sample = distribution_tb(t, beta, nb)
-        X_sample = self.getX(tb_sample)
-        w_sample = self.buffer.get_previous_w(tb_sample)
+    def tb_sampling(self, t):
+        def geometricDist(tb, beta):
+            """Probability mass function of geometric distribution"""
+            return beta * (1 - beta) ** (tb)
+        
+        # PMF of geometric distribution, reversed
+        distribution = geometricDist(np.arange(t-self.nb), self.beta)[::-1]
 
-        return X_sample, w_sample
+        return np.random.choice(t-self.nb, self.Nb, p=distribution, replace=False)
+
+
+    def get_sample_batch(self, t):
+        """
+        Get a batch of path sample randomly from price matrix and self.pvm (PVM() class)
+        """
+        tb_samples = self.tb_sampling(t)
+        X_samples = None
+        w_samples = None
+        for tb in tb_samples:
+            if X_samples == None:
+                X_samples = self.get_X(tb)
+                w_samples = self.pvm.get_previous_w(tb)
+            else:
+                X_samples = torch.cat([X_samples, self.get_X(tb)], dim=0)
+                w_samples = torch.cat([w_samples, self.pvm.get_previous_w(tb)], dim=0)
+
+        return X_samples, w_samples
 
     def save_model(self):
         """
@@ -116,20 +162,34 @@ class DPG(object):
 class PVM():
     """Portfolio Vector Memory; a stack of portfolio vectors in chronological order"""
 
-    def __init__(self) -> None:
+    def __init__(self, total_timeStep, coin_num):
         # On initialization, add portfolio vector [1, 0, ..., 0] (1 for 'cash' currency)
-        pass
+        self.total_timeStep = total_timeStep
+        self.coin_num = coin_num
+        self.pvm = None
 
-    def store_portfolio_vector(self):
-        """
-        Store portfolio vector
-        """
-        pass
+        self.next_idx = 0
 
-    def get_previous_w(self):
+    def store_portfolio_vector(self, w):
         """
-        take latest portfolio vector.
+        Store portfolio vector.
+        Note: 
         """
-        pass
+        if self.pvm == None:
+            self.pvm = np.empty((self.total_timeStep, self.coin_num), dtype=np.float32)
+        
+        self.pvm[self.next_idx] = w
+        self.next_idx += 1
+
+
+
+    def get_previous_w(self, t):
+        """
+        Take previous portfolio vector at time step t
+        """
+        w = self.pvm[t-1]
+        w = np.expand_dims(w, axis=1)
+        w = torch.from_numpy(w)
+        return w
 
     
