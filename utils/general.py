@@ -1,5 +1,12 @@
 import numpy as np
 
+def join(loader, node):
+    baseline_map = {'True':'baseline', 'False':'no-baseline'}
+    seq = loader.construct_sequence(node)
+    seq = [baseline_map[str(x)] if (str(x) in baseline_map.keys()) else x for x in seq]
+    return ''.join([str(i) for i in seq])
+    
+
 def gen_sequence(data_matrix, seq_length):
     """
     Output sequence -> 
@@ -26,3 +33,4 @@ def generate_window():
         x_vec.append(feat_vec)
     x_vec = np.stack(x_vec, axis=0).transpose(1, 0, 3, 2)
     x_vec.shape  # [batch_size, feature_number, num_currencies, window_size]
+

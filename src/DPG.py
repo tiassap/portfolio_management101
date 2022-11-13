@@ -1,6 +1,7 @@
 import torch
 import numpy as np
 from src.network import NetworkCNN
+import matplotlib.pyplot as plt
 
 
 
@@ -11,24 +12,24 @@ class DPG(object):
 
     def __init__(self, config, dataset) -> None:
         self.config = config # yaml parser (can be accessed as dictionary). See `config/ ... .yml` file
-        self.feature_num = config["input"]["feature_number"]
+        self.feature_num = config["inputs"]["feature_number"]
         # self.coin_num = config["input"]["coin_num"]
         self.coin_num = len(config["dataset"]["currencies"])
-        self.window_size = config["input"]["window_size"] # nb = 50, window size (size of X).
+        self.window_size = config["inputs"]["window_size"] # nb = 50, window size (size of X).
 
         self.price_data, self.Y = dataset.dataset # Dataset source is defined in `run.py`. Example = marketData_CSV()
         self.total_timeStep = self.price_data.shape[1] # Total time step inside dataset
 
         self.pvm = PVM(self.total_timeStep, self.coin_num) # Replay buffer
         self.NNmodel = NetworkCNN(feature_number=self.feature_num, num_currencies=self.coin_num, window_size=self.window_size ) # should be replaced by class Neural_Network()
-        self.optimizer = torch.optim.Adam(self.model.parameters())
+        self.optimizer = torch.optim.Adam(self.NNmodel.parameters())
 
-        self.beta = config["hyperparams"]["beta"] # = 5e-5, probability-decaying rate determining the shape of the probability distribution for sampling tb for training NN
+        self.beta = config["hyperparams"]["beta"] # = probability-decaying rate determining the shape of the probability distribution for sampling tb for training NN
         self.Nb = config["hyperparams"]["mini_batch"] # = 50, mini batch size
         self.mu_t = config["hyperparams"]["comission_rate"] # 0.0025 commision rate (constant, cp=cs)
         self.lr = config["hyperparams"]["learning_rate"]
 
-        self.p_0 = config["input"]["init_value"]
+        self.p_0 = config["inputs"]["init_value"]
         self.portValues = []
 
         
@@ -40,8 +41,8 @@ class DPG(object):
         while True:
             t += 1
 
-            # Because X size is nb --> 50
-            if t >= self.nb:
+            # Because X size is window_size --> 50
+            if t >= self.window_size:
                 # Get a batch price data at time step t, take portfolio vector from replay buffer, and do forward pass
                 X = self.get_X(t)
                 w = self.pvm.get_previous_w(t)
@@ -63,18 +64,21 @@ class DPG(object):
             # Finish training at these conditions
             if t >= self.total_timeStep-1:
                 break
+
+        self.plot_output()
     
     def get_X(self, t):
         """
         get X input at time step t.
+        self.price_data.shape : (feature, total_time_step, currencies)
+        X.shape : torch.Size([1, feature, currencies, window_size])
         'allprices in the input tensor will be normalization by the latest closing prices'
         """
-        X = self.price_data[:, t-self.nb:t, :] / self.price_data[:, t-1, :]
+        # X = self.price_data[:, t-self.nb:t, :] / self.price_data[:, t-1, :]
+        X = self.price_data[:, t-self.window_size:t, :] / self.price_data[0, t-1, :] # Need to double check
         X = X.transpose(0, 2, 1)
-        X = np.expand_dims(X, axis=0)
-
+        X = np.expand_dims(X, axis=0).astype(np.float32)
         X = torch.from_numpy(X)
-
         return X
 
     def calc_portValue(self, t):
@@ -102,17 +106,19 @@ class DPG(object):
         One neural network training update step.
         Use sample batch.
         """
-        X, prev_w = train_batch
         self.optimizer.zero_grad()
         loss = self.calc_loss(train_batch) * -1
         loss.backward()
         self.optimizer.step()
 
-    def calc_loss(self):
+    def calc_loss(self, train_batch):
         """
         Calculate loss function. 
         Use batch (take from self.get_batch())
         """
+        X, prev_w = train_batch
+        w_out = self.take_action(X, prev_w)
+        # Calculate the loss
         pass
 
     def tb_sampling(self, t):
@@ -121,9 +127,10 @@ class DPG(object):
             return beta * (1 - beta) ** (tb)
         
         # PMF of geometric distribution, reversed
-        distribution = geometricDist(np.arange(t-self.nb), self.beta)[::-1]
+        distribution = geometricDist(np.arange(t-self.window_size), self.beta)[::-1]
+        # import pdb; pdb.set_trace()
 
-        return np.random.choice(t-self.nb, self.Nb, p=distribution, replace=False)
+        return np.random.choice(t-self.window_size, self.Nb, p=distribution, replace=False)
 
 
     def get_sample_batch(self, t):
@@ -153,10 +160,15 @@ class DPG(object):
         """
         Create output plot.
         """
-        pass
+        plt.plot(self.portValues)
 
     def run_training(self):
-        self.train() # Run training process. Arguments for self.train() will be defined here.
+        print("Shape of dataset.dataset: ", self.price_data.shape)
+        print("Shape of self.get_X(): ", self.get_X(100).shape)
+        print("Sampling t from geometry distribution will look like this", self.tb_sampling(1000))
+        print("\nSee `run_training()` method and uncomment `self.train()`")
+        # import pdb; pdb.set_trace()
+        # self.train() # Run training process. Arguments for self.train() will be defined here.
 
 
 class PVM():
@@ -166,7 +178,7 @@ class PVM():
         # On initialization, add portfolio vector [1, 0, ..., 0] (1 for 'cash' currency)
         self.total_timeStep = total_timeStep
         self.coin_num = coin_num
-        self.pvm = None
+        self.pvm = np.zeros((self.total_timeStep, self.coin_num), dtype=np.float32)
 
         self.next_idx = 0
 
@@ -175,13 +187,8 @@ class PVM():
         Store portfolio vector.
         Note: 
         """
-        if self.pvm == None:
-            self.pvm = np.empty((self.total_timeStep, self.coin_num), dtype=np.float32)
-        
         self.pvm[self.next_idx] = w
         self.next_idx += 1
-
-
 
     def get_previous_w(self, t):
         """

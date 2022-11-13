@@ -89,4 +89,4 @@ if __name__ == "__main__":
 	# t = 10
 	# X = data.dataset[:, :, t:t+5]
 	# print(X)
-	print(data.dataset[1])
+	print(data.dataset[0].shape)
