@@ -1,8 +1,5 @@
 import torch
 from torch import nn
-"""
-In progress
-"""
 
 class NetworkCNN(nn.Module):
     def __init__(self, feature_number, num_currencies, window_size):
@@ -26,29 +23,28 @@ class NetworkCNN(nn.Module):
         
         #input_tensor =[batch_size, feature_number, num_currencies, window_size] 
         # x = x.permute(0,2,3,1) #[batch, num_currencies, window, features]
-        input_dim = x.shape[0]
+        # input_dim = x.shape[0]
         assert W.shape[1]==self.n_coins, "Number of currencies are not matching"
         
-        print(f"============== input size -> {x.size()} ,  portfolio vector size ->   {W.shape}")
+        # print(f"============== input size -> {x.size()} ,  portfolio vector size ->   {W.shape}")
         x= self.conv1(x)
         x = self.relu(x)
         
-        print(f"============== conv 1x3 ->  {x.shape}")
+        # print(f"============== conv 1x3 ->  {x.shape}")
         x =  self.conv2(x)
         x = self.relu(x) 
         
-        print(f"============== conv 1x48 ->   {x.shape}") # [batch_size, 20, num_currencies, 1]
+        # print(f"============== conv 1x48 ->   {x.shape}") # [batch_size, 20, num_currencies, 1]
         x= torch.concat((x, W.unsqueeze(1)), dim=1) ## concat previous weights with the conv features
         x =  self.conv3(x)
         
-        print(f"============== conv 1x1 ->   {x.shape}")
+        # print(f"============== conv 1x1 ->   {x.shape}")
         bias_cash = torch.ones((x.shape[0], 1, 1, 1))  
         
-        print(f"============== bias ->   {bias_cash.shape}")
+        # print(f"============== bias ->   {bias_cash.shape}")
         x= torch.concat(( bias_cash, x), dim=2)  
         
         out = self.softmax(x).squeeze(1)
         
-        print(f"============== output ->  {out.shape}")
+        # print(f"============== output ->  {out.shape}")
         return out
-# cnn = NetworkCNN(feature_number, num_currencies, window_size)

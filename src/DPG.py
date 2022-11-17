@@ -21,7 +21,7 @@ class DPG(object):
         self.total_timeStep = self.price_data.shape[1] # Total time step inside dataset
 
         self.pvm = PVM(self.total_timeStep, self.coin_num) # Replay buffer
-        self.NNmodel = NetworkCNN(feature_number=self.feature_num, num_currencies=self.coin_num, window_size=self.window_size ) # should be replaced by class Neural_Network()
+        self.NNmodel = NetworkCNN(feature_number=self.feature_num, num_currencies=self.coin_num, window_size=self.window_size )
         self.optimizer = torch.optim.Adam(self.NNmodel.parameters())
 
         self.beta = config["hyperparams"]["beta"] # = probability-decaying rate determining the shape of the probability distribution for sampling tb for training NN
@@ -46,20 +46,21 @@ class DPG(object):
                 # Get a batch price data at time step t, take portfolio vector from replay buffer, and do forward pass
                 X = self.get_X(t)
                 w = self.pvm.get_previous_w(t)
+                
                 w_out = self.take_action(X, w) # forward pass of neural network
                 # PAY ATTENTION to whether cash coin included in the tensor or not!
-
+                # import pdb; pdb.set_trace()
                 # Store sample path into replay buffer
-                self.pvm.store_portfolio_vector(w_out)
+                self.pvm.store_portfolio_vector(w_out.detach().numpy()[0,1:,0])
 
                 # Store cumulative portfolio value
                 self.store_cumPortVal(t)
 
             # Start training after ... time steps (after portvolio vector memory filled), and update neural network every ... time step freq
-            if t >= self.config["hyperparams"]["train_start"] and t % self.config["hyperparams"]["train_freq"] == 0 :
-            # Learning one step using batch of data from replay buffer.
-                train_batch = self.get_sample_batch()
-                self.update_step(train_batch)
+            # if t >= self.config["hyperparams"]["train_start"] and t % self.config["hyperparams"]["train_freq"] == 0 :
+            # # Learning one step using batch of data from replay buffer.
+            #     train_batch = self.get_sample_batch()
+            #     self.update_step(train_batch)
 
             # Finish training at these conditions
             if t >= self.total_timeStep-1:
@@ -82,7 +83,7 @@ class DPG(object):
         return X
 
     def calc_portValue(self, t):
-        return np.sum(self.mu_t * self.Y[t] * self.pvm.get_previous_w(t))
+        return np.sum(self.mu_t * self.Y[t] * self.pvm.get_previous_w(t).detach().numpy())
     
     def store_cumPortVal(self, t):
         """
@@ -161,14 +162,18 @@ class DPG(object):
         Create output plot.
         """
         plt.plot(self.portValues)
+        plt.grid(axis='x', color='0.95')
+        plt.xlabel('t')
+        plt.ylabel('portfolio value')
+        plt.savefig('port-value.png')
 
     def run_training(self):
-        print("Shape of dataset.dataset: ", self.price_data.shape)
-        print("Shape of self.get_X(): ", self.get_X(100).shape)
-        print("Sampling t from geometry distribution will look like this", self.tb_sampling(1000))
-        print("\nSee `run_training()` method and uncomment `self.train()`")
+        # print("Shape of dataset.dataset: ", self.price_data.shape)
+        # print("Shape of self.get_X(): ", self.get_X(100).shape)
+        # print("Sampling t from geometry distribution will look like this", self.tb_sampling(1000))
+        # print("\nSee `run_training()` method and uncomment `self.train()`")
         # import pdb; pdb.set_trace()
-        # self.train() # Run training process. Arguments for self.train() will be defined here.
+        self.train() # Run training process. Arguments for self.train() will be defined here.
 
 
 class PVM():
@@ -178,7 +183,7 @@ class PVM():
         # On initialization, add portfolio vector [1, 0, ..., 0] (1 for 'cash' currency)
         self.total_timeStep = total_timeStep
         self.coin_num = coin_num
-        self.pvm = np.zeros((self.total_timeStep, self.coin_num), dtype=np.float32)
+        self.memory = np.zeros((self.total_timeStep, self.coin_num), dtype=np.float32)
 
         self.next_idx = 0
 
@@ -187,15 +192,16 @@ class PVM():
         Store portfolio vector.
         Note: 
         """
-        self.pvm[self.next_idx] = w
+        self.memory[self.next_idx] = w
         self.next_idx += 1
 
     def get_previous_w(self, t):
         """
         Take previous portfolio vector at time step t
         """
-        w = self.pvm[t-1]
-        w = np.expand_dims(w, axis=1)
+        w = self.memory[t-1]
+        w = np.expand_dims(w, axis=0)
+        w = np.expand_dims(w, axis=-1)
         w = torch.from_numpy(w)
         return w
 
