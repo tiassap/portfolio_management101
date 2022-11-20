@@ -29,7 +29,7 @@ class NetworkCNN(nn.Module):
         # print(f"============== input size -> {x.size()} ,  portfolio vector size ->   {W.shape}")
 
         # import pdb; pdb.set_trace()
-        x= self.conv1(x.to(torch.LongTensor))
+        x= self.conv1(x)
         x = self.relu(x)
         
         # print(f"============== conv 1x3 ->  {x.shape}")
