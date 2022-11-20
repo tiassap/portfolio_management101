@@ -66,6 +66,10 @@ class marketData_CSV():
 		# Convert to numpy array and reshaping.
 		dataset = dataset.values[:, 1:]
 		dataset = np.array(np.split(dataset, len(self.channels), axis=1))
+
+		# Add cash values (= 1.0)
+		cash = np.ones((dataset.shape[0], dataset.shape[1], 1))
+		dataset = np.concatenate((cash, dataset), axis=2)
 		# dataset = np.moveaxis(dataset, 1, -1)
 
 		# Price relative vector. Stacked np.ones at the top so the time index align
@@ -89,4 +93,5 @@ if __name__ == "__main__":
 	# t = 10
 	# X = data.dataset[:, :, t:t+5]
 	# print(X)
-	print(data.dataset[0].shape)
+	print(data.dataset[0].shape, data.dataset[1].shape)
+	print("Y: ", data.dataset[1])

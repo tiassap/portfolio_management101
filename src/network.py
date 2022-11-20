@@ -23,11 +23,13 @@ class NetworkCNN(nn.Module):
         
         #input_tensor =[batch_size, feature_number, num_currencies, window_size] 
         # x = x.permute(0,2,3,1) #[batch, num_currencies, window, features]
-        # input_dim = x.shape[0]
+        input_dim = x.shape[0]
         assert W.shape[1]==self.n_coins, "Number of currencies are not matching"
         
         # print(f"============== input size -> {x.size()} ,  portfolio vector size ->   {W.shape}")
-        x= self.conv1(x)
+
+        # import pdb; pdb.set_trace()
+        x= self.conv1(x.to(torch.LongTensor))
         x = self.relu(x)
         
         # print(f"============== conv 1x3 ->  {x.shape}")
@@ -36,7 +38,9 @@ class NetworkCNN(nn.Module):
         
         # print(f"============== conv 1x48 ->   {x.shape}") # [batch_size, 20, num_currencies, 1]
         x= torch.concat((x, W.unsqueeze(1)), dim=1) ## concat previous weights with the conv features
+        # import pdb; pdb.set_trace()
         x =  self.conv3(x)
+        
         
         # print(f"============== conv 1x1 ->   {x.shape}")
         bias_cash = torch.ones((x.shape[0], 1, 1, 1))  
