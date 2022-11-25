@@ -6,7 +6,7 @@ dataset:
   end_period : "2022/07/01"
 
 hyperparams:
-  learning_rate : 0.005
+  learning_rate : 0.05
   comission_rate : 0.0025
   mini_batch : 50
   beta : 0.05

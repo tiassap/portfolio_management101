@@ -3,7 +3,7 @@ import numpy as np
 from src.network import NetworkCNN
 import matplotlib.pyplot as plt
 
-
+# device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 class DPG(object):
 	"""
@@ -22,7 +22,8 @@ class DPG(object):
 
 		self.pvm = PVM(self.total_timeStep, self.coin_num) # Replay buffer
 		self.NNmodel = NetworkCNN(feature_number=self.feature_num, num_currencies=self.coin_num, window_size=self.window_size )
-		self.NNmodel = self.NNmodel.to(torch.double) 
+		self.NNmodel = self.NNmodel.to(torch.double)
+		# self.NNmodel = self.NNmodel.to(device)
 		self.optimizer = torch.optim.Adam(self.NNmodel.parameters())
 
 		self.beta = config["hyperparams"]["beta"] # = probability-decaying rate determining the shape of the probability distribution for sampling tb for training NN
@@ -45,9 +46,11 @@ class DPG(object):
 
 			# Because X size is window_size --> 50
 			if t >= self.window_size:
+				self.NNmodel.eval()
 				# Get a batch price data at time step t, take portfolio vector from replay buffer, and do forward pass
 				X = self.get_X(t)
 				w = self.pvm.get_previous_w(t)
+				# X, w = X.to(device), w.to(device)
 				
 				w_out = self.take_action(X, w[:, 1:, :]) # w.shape: (1, currency, 1). Excluding cash currency
 
@@ -62,10 +65,13 @@ class DPG(object):
 				self.store_cumPortVal(t)
 			
 			# Start training after ... time steps (after portvolio vector memory filled), and update neural network every ... time step freq
-			# if t >= self.config["hyperparams"]["train_start"] and t % self.config["hyperparams"]["train_freq"] == 0 :
-			# # Learning one step using batch of data from replay buffer.
-			#     train_batch = self.get_sample_batch(t)
-			#     self.update_step(train_batch)
+			if t >= self.config["hyperparams"]["train_start"] and t % self.config["hyperparams"]["train_freq"] == 0 :
+			# Learning one step using batch of data from replay buffer.
+				print("Training.... t={}".format(t))
+				train_batch = self.get_sample_batch(t)
+				loss = self.update_step(train_batch)
+				print("\tPortfolio value: .. , Loss: {}\n".format(loss))
+				# print("\tPortfolio value: {}, Loss: {}\n".format(self.portValues[t].sum(), loss))
 
 			# Finish training at these conditions
 			if t >= self.total_timeStep-1:
@@ -91,21 +97,20 @@ class DPG(object):
 
 	def update_mu_t(self, t):
 		# Equation (16) in the paper
-		# self.mu_t = self.commision_rate * np.sum(np.abs(self.pvm.memory[t] - self.pvm.memory[t-1]))
-		print(self.mu_t)
+		self.mu_t = 1.0 - self.commision_rate * np.sum(np.abs(self.pvm.memory[t] - self.pvm.memory[t-1]))
 
 	def calc_portValue(self, t):
 		return self.mu_t * self.Y[t] * self.pvm.get_previous_w(t).squeeze().detach().numpy()
 	
 	def store_cumPortVal(self, t):
 		"""
-		Calculate portfolio value at given step: sum of ( price of each asset times weight of each asset)
+		Calculate portfolio value at given step: sum of (price of each asset times weight of each asset)
 		"""
 		if self.portValues is None:
 			self.portValues = np.insert(np.zeros(self.coin_num), 0, self.p_0)
 			self.portValues = np.expand_dims(self.portValues, axis=0)
 
-		# Equation (11) in paper
+		# Equation (11) in the paper
 		cum_portVal = self.portValues[-1].sum() * self.calc_portValue(t)
 		self.portValues = np.vstack((self.portValues, cum_portVal))
 		
@@ -121,10 +126,15 @@ class DPG(object):
 		One neural network training update step.
 		Use sample batch.
 		"""
+		self.NNmodel.train()
 		self.optimizer.zero_grad()
+
+		# Gradient ascent, equation (25)
 		loss = self.calc_loss(train_batch) * -1
 		loss.backward()
 		self.optimizer.step()
+
+		return loss
 
 	def calc_loss(self, train_batch):
 		"""
@@ -132,14 +142,19 @@ class DPG(object):
 		Use batch (take from self.get_batch())
 		"""
 		X, prev_w, tb = train_batch
-		w_out = self.take_action(X, prev_w)
+		
+		w_out = self.take_action(X, prev_w[:, 1:, :])
 
+		Y_tb = torch.tensor(self.Y[tb].astype(np.float64))
+
+		# import pdb; pdb.set_trace()
+
+		# Equation (10)&(21) in the paper; Note: r_t = ln(mu_t * y_{t+1} * w_{t})
 		tb = tb + 1
+		loss = torch.sum(torch.log(self.mu_t * Y_tb * w_out.squeeze())) # Squeeze because w_out.shape: (batch, currency, 1)
 
+		return loss
 
-		# Calculate the loss
-
-		pass
 
 	def tb_sampling(self, t):
 		def geometricDist(tb, beta):
@@ -148,7 +163,6 @@ class DPG(object):
 		
 		# PMF of geometric distribution, reversed
 		distribution = geometricDist(np.arange(t-self.window_size), self.beta)[::-1]
-		# import pdb; pdb.set_trace()
 
 		return np.random.choice(t-self.window_size, self.Nb, p=distribution, replace=False)
 
@@ -221,5 +235,3 @@ class PVM():
 		w = np.expand_dims(w, axis=-1)
 		w = torch.from_numpy(w)
 		return w
-
-	
