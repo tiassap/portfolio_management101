@@ -6,12 +6,12 @@ dataset:
   end_period : "2022/07/01"
 
 hyperparams:
-  learning_rate : 0.05
+  learning_rate : 0.01
   comission_rate : 0.0025
-  mini_batch : 50
+  mini_batch : 100
   beta : 0.05
   train_start : 1000
-  train_freq : 100
+  train_freq : 500
 
 inputs:
   feature_number : 3

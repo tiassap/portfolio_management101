@@ -16,7 +16,7 @@ class DPG(object):
 		# self.coin_num = config["input"]["coin_num"]
 		self.coin_num = len(config["dataset"]["currencies"])
 		self.window_size = config["inputs"]["window_size"] # nb = 50, window size (size of X).
-
+		self.lr = config["hyperparams"]["learning_rate"]
 		self.price_data, self.Y = dataset.dataset # Dataset source is defined in `run.py`. Example = marketData_CSV()
 		self.total_timeStep = self.price_data.shape[1] # Total time step inside dataset
 
@@ -24,7 +24,7 @@ class DPG(object):
 		self.NNmodel = NetworkCNN(feature_number=self.feature_num, num_currencies=self.coin_num, window_size=self.window_size )
 		self.NNmodel = self.NNmodel.to(torch.double)
 		# self.NNmodel = self.NNmodel.to(device)
-		self.optimizer = torch.optim.Adam(self.NNmodel.parameters())
+		self.optimizer = torch.optim.Adam(self.NNmodel.parameters(), lr=self.lr)
 
 		self.beta = config["hyperparams"]["beta"] # = probability-decaying rate determining the shape of the probability distribution for sampling tb for training NN
 		self.Nb = config["hyperparams"]["mini_batch"] # = 50, mini batch size
@@ -34,6 +34,7 @@ class DPG(object):
 
 		self.p_0 = config["inputs"]["init_value"]
 		self.portValues = None
+		self.score = []
 
 		
 	def train(self):
@@ -70,16 +71,15 @@ class DPG(object):
 				print("Training.... t={}".format(t))
 				train_batch = self.get_sample_batch(t)
 				loss = self.update_step(train_batch)
-				print("\tPortfolio value: .. , Loss: {}\n".format(loss))
-				# print("\tPortfolio value: {}, Loss: {}\n".format(self.portValues[t].sum(), loss))
+				# print("\tPortfolio value: .. , Loss (score) : {}\n".format(loss))
+				print("\tPortfolio value: {}, Loss: {}\n".format(self.portValues[t-(self.window_size-1)].sum(), loss))
 
 			# Finish training at these conditions
 			if t >= self.total_timeStep-1:
 				break
 
 		self.plot_output()
-		print(self.portValues)
-		print(self.pvm.memory)
+		print("Finished .. see output.png")
 	
 	def get_X(self, t):
 		"""
@@ -107,12 +107,13 @@ class DPG(object):
 		Calculate portfolio value at given step: sum of (price of each asset times weight of each asset)
 		"""
 		if self.portValues is None:
-			self.portValues = np.insert(np.zeros(self.coin_num), 0, self.p_0)
+			self.portValues = np.insert(np.zeros(self.coin_num), 0, self.p_0) 
 			self.portValues = np.expand_dims(self.portValues, axis=0)
 
 		# Equation (11) in the paper
 		cum_portVal = self.portValues[-1].sum() * self.calc_portValue(t)
 		self.portValues = np.vstack((self.portValues, cum_portVal))
+		# import pdb; pdb.set_trace()
 		
 
 	def take_action(self, X, w):
@@ -134,6 +135,8 @@ class DPG(object):
 		loss.backward()
 		self.optimizer.step()
 
+		self.score.append(loss.detach().numpy().item())
+
 		return loss
 
 	def calc_loss(self, train_batch):
@@ -151,7 +154,7 @@ class DPG(object):
 
 		# Equation (10)&(21) in the paper; Note: r_t = ln(mu_t * y_{t+1} * w_{t})
 		tb = tb + 1
-		loss = torch.sum(torch.log(self.mu_t * Y_tb * w_out.squeeze())) # Squeeze because w_out.shape: (batch, currency, 1)
+		loss = torch.sum(torch.log(self.mu_t * Y_tb * w_out.squeeze())) / self.Nb # Squeeze because w_out.shape: (batch, currency, 1)
 
 		return loss
 
@@ -198,11 +201,18 @@ class DPG(object):
 		"""
 		Create output plot.
 		"""
-		plt.plot(self.portValues.sum(axis=1))
-		plt.grid(axis='x', color='0.95')
-		plt.xlabel('t (trading interval: 30 min)')
-		plt.ylabel('portfolio value (USD)')
-		plt.savefig('port-value.png')
+		# plt.plot(self.portValues.sum(axis=1))
+		# plt.grid(axis='x', color='0.95')
+		# plt.xlabel('t (trading interval: 30 min)')
+		# plt.ylabel('portfolio value (USD)')
+		# plt.savefig('port-value.png')
+		fig, (ax1, ax2) = plt.subplots(2)
+		# fig.suptitle('Horizontally stacked subplots')
+		ax1.plot(self.portValues.sum(axis=1))
+		ax1.set(xlabel='t (trading interval: 30 min)', ylabel='portfolio value (USD)')
+		ax2.plot(self.score)
+		ax2.set(xlabel='t (training freq: {})'.format(self.config["hyperparams"]["train_freq"]), ylabel='score')
+		plt.savefig('output.png')
 
 	def run_training(self):
 		self.train() # Run training process. Arguments for self.train() will be defined here.

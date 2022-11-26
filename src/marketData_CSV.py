@@ -29,7 +29,7 @@ class marketData_CSV():
 		self.end = end
 
 		# Channels of the array
-		self.channels = ['open', 'high', 'low']
+		self.channels = ['close', 'high', 'low'] # Page 9 on the paper: "Features for asset i on Period t are its closing, highset, and lowest prices in the interval"
 
 		# Dataset (np.array) after processing.
 		self.dataset = self.__process()
