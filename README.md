@@ -9,3 +9,15 @@ Collaborators (in alphabetical order):
 - [@tiassap](https://github.com/tiassap)
 - [@yamasyuy](https://github.com/yamasyuy)
 - [@YaroslavPonomarenko](https://github.com/YaroslavPonomarenko)
+
+
+## Environment setup (with Anaconda)
+
+```
+conda env create -f conda_env/environment.yml
+```
+
+## Run the code
+```
+python run.py --config=config_1 --train
+```

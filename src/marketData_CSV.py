@@ -29,7 +29,7 @@ class marketData_CSV():
 		self.end = end
 
 		# Channels of the array
-		self.channels = ['open', 'high', 'low']
+		self.channels = ['close', 'high', 'low'] # Page 9 on the paper: "Features for asset i on Period t are its closing, highset, and lowest prices in the interval"
 
 		# Dataset (np.array) after processing.
 		self.dataset = self.__process()
@@ -41,7 +41,7 @@ class marketData_CSV():
 		Return
 		------
 		dataset : Numpy Array
-			dataset.shape : (num_channels, num_currencies, time_period)
+			dataset.shape : (num_channels, time_period, num_currencies)
 		"""
 		from functools import reduce
 
@@ -66,9 +66,17 @@ class marketData_CSV():
 		# Convert to numpy array and reshaping.
 		dataset = dataset.values[:, 1:]
 		dataset = np.array(np.split(dataset, len(self.channels), axis=1))
-		dataset = np.moveaxis(dataset, 1, -1)
 
-		return dataset
+		# Add cash values (= 1.0)
+		cash = np.ones((dataset.shape[0], dataset.shape[1], 1))
+		dataset = np.concatenate((cash, dataset), axis=2)
+		# dataset = np.moveaxis(dataset, 1, -1)
+
+		# Price relative vector. Stacked np.ones at the top so the time index align
+		Y = dataset[0, 1:]/dataset[0,:-1] # Take only the first feature (index 0), closing price
+		Y = np.vstack([np.ones(Y.shape[1]), Y])
+
+		return dataset, Y
 
 	def validate_dataset(self, dataset):
 		"""Validate csv files format. Return error if incorrect"""
@@ -81,4 +89,9 @@ if __name__ == "__main__":
 	start="2021-04-01"
 	end="2021-12-31"
 	data = marketData_CSV(csv_filePath=path, currencies=coins, start=start, end=end)
-	print(data.dataset)
+	# print(data.dataset)
+	# t = 10
+	# X = data.dataset[:, :, t:t+5]
+	# print(X)
+	print(data.dataset[0].shape, data.dataset[1].shape)
+	print("Y: ", data.dataset[1])

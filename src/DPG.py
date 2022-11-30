@@ -1,135 +1,252 @@
 import torch
 import numpy as np
-import deque
-from src.network import #...
+from src.network import NetworkCNN
+import matplotlib.pyplot as plt
 
-
+# device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 class DPG(object):
-    """
-    Deterministic Policy Gradient
-    """
+	"""
+	Deterministic Policy Gradient
+	"""
 
-    def __init__(self, config, dataset) -> None:
-        self.config = config # yaml parser (can be accessed as dictionary). See `config/ ... .yml` file
-        self.price_data = dataset # Dataset source is defined in `run.py`. Example = marketData_CSV()
-        self.buffer = PVM() # Replay buffer
-        self.NNmodel = None # should be replaced by class Neural_Network()
-        self.optimizer = torch.optim.Adam(self.model.parameters())
+	def __init__(self, config, dataset) -> None:
+		self.config = config # yaml parser (can be accessed as dictionary). See `config/ ... .yml` file
+		self.feature_num = config["inputs"]["feature_number"]
+		# self.coin_num = config["input"]["coin_num"]
+		self.coin_num = len(config["dataset"]["currencies"])
+		self.window_size = config["inputs"]["window_size"] # nb = 50, window size (size of X).
+		self.lr = config["hyperparams"]["learning_rate"]
+		self.price_data, self.Y = dataset.dataset # Dataset source is defined in `run.py`. Example = marketData_CSV()
+		self.total_timeStep = self.price_data.shape[1] # Total time step inside dataset
 
-        self.beta = config["beta"] # = 5e-5, probability-decaying rate determining the shape of the probability distribution for sampling tb for training NN
-        self.nb = config["window-size_nb"] # = 50, window size (size of X).
-        self.Nb = config["mini-batch_Nb"] # = 50, mini batch size
-        self.cs = config["cs"] # 0.0025 commision rate
+		self.pvm = PVM(self.total_timeStep, self.coin_num) # Replay buffer
+		self.NNmodel = NetworkCNN(feature_number=self.feature_num, num_currencies=self.coin_num, window_size=self.window_size )
+		self.NNmodel = self.NNmodel.to(torch.double)
+		# self.NNmodel = self.NNmodel.to(device)
+		self.optimizer = torch.optim.Adam(self.NNmodel.parameters(), lr=self.lr)
 
-        
-    def train(self):
-        """
-        Run training process
-        """
-        t = 0
-        while True:
-            t += 1
+		self.beta = config["hyperparams"]["beta"] # = probability-decaying rate determining the shape of the probability distribution for sampling tb for training NN
+		self.Nb = config["hyperparams"]["mini_batch"] # = 50, mini batch size
+		self.commision_rate = config["hyperparams"]["comission_rate"] # 0.0025 commision rate (constant, cp=cs)
+		self.mu_t = 1.0 # transaction remainder factor. Will be updated by self.update_mu_t
+		self.lr = config["hyperparams"]["learning_rate"]
 
-            # Because X size is nb --> 50
-            if t >= self.nb:
-                # Get a batch price data at time step t, take portfolio vector from replay buffer, and do forward pass
-                X = self.get_X(t)
-                w = self.buffer.get_previous_w()
-                w_out = self.take_action(X, w) # forward pass of neural network
+		self.p_0 = config["inputs"]["init_value"]
+		self.portValues = None
+		self.score = []
+		# import pdb; pdb.set_trace()
 
-            # Store sample path into replay buffer
-            self.buffer.store_portfolio_vector(w_out)
+		
+	def train(self):
+		"""
+		Run training process
+		"""
+		t = 0
+		while True:
+			t += 1
 
-            # Start training after ... time steps (after portvolio vector memory filled), and update neural network every ... time step freq
-            if t >= train_start and t % freq_train == 0 :
-            # Learning one step using batch of data from replay buffer.
-                train_batch = self.get_sample_batch()
-                self.update_step(train_batch)
+			# Because X size is window_size --> 50
+			if t >= self.window_size:
+				self.NNmodel.eval()
+				# Get a batch price data at time step t, take portfolio vector from replay buffer, and do forward pass
+				X = self.get_X(t)
+				w = self.pvm.get_previous_w(t)
+				# X, w = X.to(device), w.to(device)
+				
+				w_out = self.take_action(X, w[:, 1:, :]) # w.shape: (1, currency, 1). Excluding cash currency
 
-            # Finish training at these conditions
-            if t >= max_t_length or t >= dataset_end_period:
-                break
-    
-    def get_X(self, t):
-        """
-        get X input at time step t
-        """
-        return self.price_data[:, :, t-self.nb:t]
+				# PAY ATTENTION to whether cash coin included in the tensor or not!
+				# Store sample path into replay buffer
+				# self.pvm.store_portfolio_vector(w_out.detach().numpy()[0,:,0], t)
+				self.pvm.store_portfolio_vector(w_out.squeeze().detach().numpy(), t)
 
-    def calc_portValue(self, Y, w):
-        """
-        Calculate portfolio value at given step: sum of ( price of each asset times weight of each asset)
-        """
-        pass
+				# Update transaction remainder factor mu_t
+				self.update_mu_t(t)
 
-    def take_action(self, x, w):
-        """
-        Get action (portfolio weight vector) by doing inference on neural network
-        """
-        return self.NNmodel(x, w) # NN model take price data input and previous portfolio weight
+				# Store cumulative portfolio value
+				self.store_cumPortVal(t)
+			
+			# Start training after ... time steps (after portvolio vector memory filled), and update neural network every ... time step freq
+			if t >= self.config["hyperparams"]["train_start"] and t % self.config["hyperparams"]["train_freq"] == 0 :
+			# Learning one step using batch of data from replay buffer.
+				print("Training.... t={}".format(t))
+				train_batch = self.get_sample_batch(t)
+				loss = self.update_step(train_batch)
+				# print("\tPortfolio value: .. , Loss (score) : {}\n".format(loss))
+				print("\tPortfolio value: {}, Loss: {}\n".format(self.portValues[t-(self.window_size-1)].sum(), loss))
 
-    def update_step(self, train_batch):
-        """
-        One neural network training update step.
-        Use sample batch.
-        """
-        X, prev_w = train_batch
-        self.optimizer.zero_grad()
-        loss = self.calc_loss()
-        loss.backward()
-        self.optimizer.step()
+			# Finish training at these conditions
+			if t >= self.total_timeStep-1:
+				break
 
-    def calc_loss(self):
-        """
-        Calculate loss function. 
-        Use batch (take from self.get_batch())
-        """
-        pass
+		self.plot_output()
+		print("Finished .. see output.png")
+	
+	def get_X(self, t):
+		"""
+		get X input at time step t.
+		self.price_data.shape : (feature, total_time_step, currencies_(excluding cash!))
+		X.shape : torch.Size([1, feature, currencies, window_size])
+		'allprices in the input tensor will be normalization by the latest closing prices'
+		"""
+		# Cash currency is NOT included in price tensor X
+		X = self.price_data[:, t-self.window_size:t, 1:] / self.price_data[0, t-1, 1:] # Need to double check
+		X = X.transpose(0, 2, 1)
+		X = np.expand_dims(X, axis=0).astype(np.float64)
+		X = torch.tensor(X)
+		return X
 
-    def get_sample_batch(self, t, beta, nb):
-        """
-        Get a batch of path sample randomly from self.buffer (PVM() class)
-        """
-        tb_sample = distribution_tb(t, beta, nb)
-        X_sample = self.getX(tb_sample)
-        w_sample = self.buffer.get_previous_w(tb_sample)
+	def update_mu_t(self, t):
+		# Equation (16) in the paper
+		self.mu_t = 1.0 - self.commision_rate * np.sum(np.abs(self.pvm.memory[t] - self.pvm.memory[t-1]))
 
-        return X_sample, w_sample
+	def calc_portValue(self, t):
+		return self.mu_t * self.Y[t] * self.pvm.get_previous_w(t).squeeze().detach().numpy()
+	
+	def store_cumPortVal(self, t):
+		"""
+		Calculate portfolio value at given step: sum of (price of each asset times weight of each asset)
+		"""
+		if self.portValues is None:
+			self.portValues = np.insert(np.zeros(self.coin_num), 0, self.p_0) 
+			self.portValues = np.expand_dims(self.portValues, axis=0)
 
-    def save_model(self):
-        """
-        Save neural network parameter weights as `model.pth` and output rewards as Numpy .npy file.
-        """
-        pass
+		# Equation (11) in the paper
+		cum_portVal = self.portValues[-1].sum() * self.calc_portValue(t)
+		self.portValues = np.vstack((self.portValues, cum_portVal))
+		# import pdb; pdb.set_trace()
+		
 
-    def plot_output(self):
-        """
-        Create output plot.
-        """
-        pass
+	def take_action(self, X, w):
+		"""
+		Get action (portfolio weight vector) by doing inference on neural network
+		"""
+		return self.NNmodel(X, w) # NN model take price data input and previous portfolio weight
 
-    def run_training(self):
-        self.train() # Run training process. Arguments for self.train() will be defined here.
+	def update_step(self, train_batch):
+		"""
+		One neural network training update step.
+		Use sample batch.
+		"""
+		self.NNmodel.train()
+		self.optimizer.zero_grad()
+
+		# Gradient ascent, equation (25)
+		loss = self.calc_loss(train_batch) * -1
+		loss.backward()
+		self.optimizer.step()
+
+		return loss
+
+	def calc_loss(self, train_batch):
+		"""
+		Calculate loss function. 
+		Use batch (take from self.get_batch())
+		"""
+		X, prev_w, tb = train_batch
+		
+		w_out = self.take_action(X, prev_w[:, 1:, :])
+
+		tb = tb + 1
+		Y_tb = torch.tensor(self.Y[tb].astype(np.float64))
+
+		# import pdb; pdb.set_trace()
+
+		# Equation (10)&(21) in the paper; Note: r_t = ln(mu_t * y_{t+1} * w_{t})
+		loss = torch.sum(torch.log(self.mu_t * Y_tb * w_out.squeeze())) / self.Nb # Squeeze because w_out.shape: (batch, currency, 1)
+
+		self.score.append(loss.detach().numpy().item())
+
+		return loss
+
+
+	def tb_sampling(self, t):
+		def geometricDist(tb, beta):
+			"""Probability mass function of geometric distribution"""
+			return beta * (1 - beta) ** (tb)
+		
+		# PMF of geometric distribution, reversed
+		distribution = geometricDist(np.arange(t-self.window_size), self.beta)[::-1]
+
+		return np.random.choice(t-self.window_size, self.Nb, p=distribution, replace=False)
+
+
+	def get_sample_batch(self, t):
+		"""
+		Get a batch of path sample randomly from price matrix and self.pvm (PVM() class)
+		---
+		X_samples: torch.Tensor
+		w_samples: torch.Tensor
+		tb_samples: numpy.Array
+		"""
+		tb_samples = self.tb_sampling(t)
+		X_samples = None
+		w_samples = None
+		for tb in tb_samples:
+			if X_samples == None:
+				X_samples = self.get_X(tb)
+				w_samples = self.pvm.get_previous_w(tb)
+			else:
+				X_samples = torch.cat([X_samples, self.get_X(tb)], dim=0)
+				w_samples = torch.cat([w_samples, self.pvm.get_previous_w(tb)], dim=0)
+
+		X_samples.requires_grad_()
+		w_samples.requires_grad_()
+
+		return X_samples, w_samples, tb_samples
+
+	def save_model(self):
+		"""
+		Save neural network parameter weights as `model.pth` and output rewards as Numpy .npy file.
+		"""
+		pass
+
+	def plot_output(self):
+		"""
+		Create output plot.
+		"""
+		# plt.plot(self.portValues.sum(axis=1))
+		# plt.grid(axis='x', color='0.95')
+		# plt.xlabel('t (trading interval: 30 min)')
+		# plt.ylabel('portfolio value (USD)')
+		# plt.savefig('port-value.png')
+		fig, (ax1, ax2) = plt.subplots(2)
+		# fig.suptitle('Horizontally stacked subplots')
+		ax1.plot(self.portValues.sum(axis=1))
+		ax1.set(xlabel='t (trading interval: 30 min)', ylabel='portfolio value (USD)')
+		ax2.plot(self.score)
+		ax2.set(xlabel='t (training freq: {})'.format(self.config["hyperparams"]["train_freq"]), ylabel='score')
+		plt.savefig('output.png')
+
+	def run_training(self):
+		self.train() # Run training process. Arguments for self.train() will be defined here.
 
 
 class PVM():
-    """Portfolio Vector Memory; a stack of portfolio vectors in chronological order"""
+	"""Portfolio Vector Memory; a stack of portfolio vectors in chronological order"""
 
-    def __init__(self) -> None:
-        # On initialization, add portfolio vector [1, 0, ..., 0] (1 for 'cash' currency)
-        pass
+	def __init__(self, total_timeStep, coin_num):
+		# On initialization, add portfolio vector [1, 0, ..., 0] (1 for 'cash' currency)
+		self.total_timeStep = total_timeStep
+		self.coin_num = coin_num
+		self.memory = np.zeros((self.total_timeStep, self.coin_num))
+		cash = np.ones((self.total_timeStep, 1))
+		self.memory = np.concatenate((cash, self.memory), axis=1)
 
-    def store_portfolio_vector(self):
-        """
-        Store portfolio vector
-        """
-        pass
+	def store_portfolio_vector(self, w, t):
+		"""
+		Store portfolio vector.
+		Note: 
+		"""
+		self.memory[t] = w
 
-    def get_previous_w(self):
-        """
-        take latest portfolio vector.
-        """
-        pass
-
-    
+	def get_previous_w(self, t):
+		"""
+		Take previous portfolio vector at time step t
+		"""
+		w = self.memory[t-1]
+		w = np.expand_dims(w, axis=0)
+		w = np.expand_dims(w, axis=-1)
+		w = torch.from_numpy(w)
+		return w
