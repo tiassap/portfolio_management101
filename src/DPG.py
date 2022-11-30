@@ -35,6 +35,7 @@ class DPG(object):
 		self.p_0 = config["inputs"]["init_value"]
 		self.portValues = None
 		self.score = []
+		# import pdb; pdb.set_trace()
 
 		
 	def train(self):
@@ -57,7 +58,8 @@ class DPG(object):
 
 				# PAY ATTENTION to whether cash coin included in the tensor or not!
 				# Store sample path into replay buffer
-				self.pvm.store_portfolio_vector(w_out.detach().numpy()[0,:,0], t)
+				# self.pvm.store_portfolio_vector(w_out.detach().numpy()[0,:,0], t)
+				self.pvm.store_portfolio_vector(w_out.squeeze().detach().numpy(), t)
 
 				# Update transaction remainder factor mu_t
 				self.update_mu_t(t)
@@ -135,8 +137,6 @@ class DPG(object):
 		loss.backward()
 		self.optimizer.step()
 
-		self.score.append(loss.detach().numpy().item())
-
 		return loss
 
 	def calc_loss(self, train_batch):
@@ -148,13 +148,15 @@ class DPG(object):
 		
 		w_out = self.take_action(X, prev_w[:, 1:, :])
 
+		tb = tb + 1
 		Y_tb = torch.tensor(self.Y[tb].astype(np.float64))
 
 		# import pdb; pdb.set_trace()
 
 		# Equation (10)&(21) in the paper; Note: r_t = ln(mu_t * y_{t+1} * w_{t})
-		tb = tb + 1
 		loss = torch.sum(torch.log(self.mu_t * Y_tb * w_out.squeeze())) / self.Nb # Squeeze because w_out.shape: (batch, currency, 1)
+
+		self.score.append(loss.detach().numpy().item())
 
 		return loss
 
@@ -188,6 +190,9 @@ class DPG(object):
 			else:
 				X_samples = torch.cat([X_samples, self.get_X(tb)], dim=0)
 				w_samples = torch.cat([w_samples, self.pvm.get_previous_w(tb)], dim=0)
+
+		X_samples.requires_grad_()
+		w_samples.requires_grad_()
 
 		return X_samples, w_samples, tb_samples
 
