@@ -1,9 +1,12 @@
+#!/usr/bin/env python3
 import argparse
 import yaml
 from utils.general import join
 from src.DPG import DPG
 from src.marketData_CSV import marketData_CSV
 
+import os
+os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--config", required=False, type=str)
